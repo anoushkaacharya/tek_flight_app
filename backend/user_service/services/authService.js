@@ -8,27 +8,14 @@ exports.login = async ({ email, password }) => {
     throw new Error("Email and password are required");
   }
 
-  // Fetch user WITH their roles joined
   const user = await User.findOne({
     where: { email },
-    include: [{ model: Role, as: "roles", attributes: ["role_name"] }],
+    include: [{ model: Role, as: "roles", attributes: ["role_name"], through: { attributes: [] } }],
   });
-
-  // ─── DEBUG (remove after fix) ───────────────────────────────
-  console.log("LOGIN DEBUG — email attempted:", email);
-  console.log("LOGIN DEBUG — user found:", user ? user.email : "NOT FOUND");
-  console.log("LOGIN DEBUG — roles:", user ? JSON.stringify(user.roles) : "N/A");
-  console.log("LOGIN DEBUG — hashed password in DB:", user ? user.password : "N/A");
-  // ────────────────────────────────────────────────────────────
 
   if (!user) throw new Error("User not found");
 
   const isMatch = await bcrypt.compare(password, user.password);
-
-  // ─── DEBUG (remove after fix) ───────────────────────────────
-  console.log("LOGIN DEBUG — password match:", isMatch);
-  // ────────────────────────────────────────────────────────────
-
   if (!isMatch) throw new Error("Invalid credentials");
 
   const roles = user.roles.map(r => r.role_name);
@@ -65,36 +52,18 @@ exports.register = async ({
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  // Create user first
   const newUser = await User.create({
     firstName, lastName, email, phoneNumber,
     password: hashedPassword,
   });
 
-  // ─── DEBUG (remove after fix) ───────────────────────────────
-  console.log("REGISTER DEBUG — user created:", newUser.user_id, newUser.email);
-  // ────────────────────────────────────────────────────────────
-
-  // Then assign USER role in user_roles table
   const userRole = await Role.findOne({ where: { role_name: "USER" } });
-
-  // ─── DEBUG (remove after fix) ───────────────────────────────
-  console.log("REGISTER DEBUG — USER role found:", userRole ? userRole.role_id : "NOT FOUND");
-  // ────────────────────────────────────────────────────────────
-
   if (userRole) {
     await UserRole.create({
       user_id: newUser.user_id,
       role_id: userRole.role_id,
     });
-    // ─── DEBUG (remove after fix) ─────────────────────────────
-    console.log("REGISTER DEBUG — role assigned to user");
-    // ──────────────────────────────────────────────────────────
-  } else {
-    // ─── DEBUG (remove after fix) ─────────────────────────────
-    console.log("REGISTER DEBUG — WARNING: USER role not found, role NOT assigned");
-    // ──────────────────────────────────────────────────────────
-  }
+  }                  // ← this closing brace was missing
 
   return { success: true };
 };
