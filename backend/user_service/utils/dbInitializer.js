@@ -1,25 +1,42 @@
 const bcrypt = require("bcryptjs");
-const User = require("../models/userModel");
-async function createAdmin() {
+const { User, Role, UserRole } = require("../models/index");
+
+const dataInitializer = async () => {
+  console.log("Initializing data...");
+
   try {
-    const existingAdmin = await User.findOne({ where: { email: "admin@test.com" } });
-    if (!existingAdmin) {
-      const hashed = await bcrypt.hash("admin123", 10);
-      await User.create({
-        name: "Admin",
-        email: "admin@test.com",
-        password: hashed,
-        role: "ADMIN",
+    // Seed roles first
+    const [adminRole] = await Role.findOrCreate({ where: { role_name: "ADMIN" } });
+    const [userRole]  = await Role.findOrCreate({ where: { role_name: "USER"  } });
+    console.log("Roles seeded");
+
+    // Seed admin user
+    const adminEmail    = process.env.ADMIN_EMAIL    || "admin@test.com";
+    const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+
+    const [adminUser, created] = await User.findOrCreate({
+      where: { email: adminEmail },
+      defaults: {
+        firstName:   "Admin",
+        lastName:    "User",
+        phoneNumber: "1234056789",
+        password:    await bcrypt.hash(adminPassword, 10),
+      },
+    });
+
+    if (created) {
+      // Assign ADMIN role in user_roles table
+      await UserRole.findOrCreate({
+        where: { user_id: adminUser.user_id, role_id: adminRole.role_id },
       });
-      console.log("Admin user created");
+      console.log("Admin user created and role assigned");
     } else {
-      console.log("Admin user already exists");
+      console.log(`Admin already exists (${adminEmail})`);
     }
-  } catch (err) {
-    console.error("Error creating admin:", err.message);
+
+  } catch (error) {
+    console.error("Error initializing data:", error.message);
   }
-}
-if (require.main === module) {
-  createAdmin();
-}
-module.exports = createAdmin;
+};
+
+module.exports = dataInitializer;
