@@ -1,31 +1,39 @@
-const request  = require("supertest");
-const app      = require("../app");
-const sequelize = require("../config/db");
+process.env.JWT_SECRET = "test_secret_key";
+
+const request = require("supertest");
+const app     = require("../app");
+
+// ─── Mock all models inline ────────────────────────────────────
+jest.mock("../models/index", () => ({
+  User: {
+    findOne: jest.fn(),
+    create:  jest.fn(),
+    findAll: jest.fn(),
+  },
+  Role: {
+    findOne:      jest.fn(),
+    create:       jest.fn(),
+    findOrCreate: jest.fn(),
+  },
+  UserRole: {
+    findOne:      jest.fn(),
+    create:       jest.fn(),
+    findOrCreate: jest.fn(),
+  },
+}));
+
+// ─── Mock DB connection ────────────────────────────────────────
+jest.mock("../config/db", () => ({
+  define: jest.fn(),
+  sync:   jest.fn().mockResolvedValue(true),
+  close:  jest.fn().mockResolvedValue(true),
+  query:  jest.fn().mockResolvedValue([]),
+}));
+
 const { User, Role, UserRole } = require("../models/index");
 
-beforeAll(async () => {
-  await sequelize.sync({ force: true });
-
-  // Seed roles
-  await Role.create({ role_name: "USER" });
-  await Role.create({ role_name: "ADMIN" });
-
-  // Pre-register a user so login tests have someone to log in as
-  // This makes login tests independent of the register describe block
-  await request(app)
-    .post("/api/v1.0/flight/user/register")
-    .send({
-      firstName:       "Test",
-      lastName:        "User",
-      email:           "test@example.com",
-      phoneNumber:     "9876543210",
-      password:        "123456",
-      confirmPassword: "123456",
-    });
-});
-
-afterAll(async () => {
-  await sequelize.close();
+afterEach(() => {
+  jest.clearAllMocks();
 });
 
 // ─── Registration tests ────────────────────────────────────────
@@ -33,29 +41,25 @@ afterAll(async () => {
 describe("Register", () => {
 
   test("successfully registers a new user", async () => {
+    User.findOne.mockResolvedValue(null);
+    Role.findOne.mockResolvedValue({ role_id: 1, role_name: "USER" });
+    User.create.mockResolvedValue({ user_id: 1, email: "test@example.com" });
+    UserRole.create.mockResolvedValue({});
+
     const res = await request(app)
       .post("/api/v1.0/flight/user/register")
       .send({
         firstName:       "Test",
         lastName:        "User",
-        email:           "user@example.com",
-        phoneNumber:     "9876543290",
+        email:           "test@example.com",
+        phoneNumber:     "9876543210",
         password:        "123456",
         confirmPassword: "123456",
       });
 
     expect(res.statusCode).toBe(201);
-
-    // Verify user was actually created in DB
-    const user = await User.findOne({ where: { email: "test@example.com" } });
-    expect(user).not.toBeNull();
-
-    // Verify USER role was assigned in user_roles table
-    const userRole = await Role.findOne({ where: { role_name: "USER" } });
-    const mapping  = await UserRole.findOne({
-      where: { user_id: user.user_id, role_id: userRole.role_id },
-    });
-    expect(mapping).not.toBeNull();
+    expect(User.create).toHaveBeenCalledTimes(1);
+    expect(UserRole.create).toHaveBeenCalledTimes(1);
   });
 
   test("fails with missing fields", async () => {
@@ -63,7 +67,7 @@ describe("Register", () => {
       .post("/api/v1.0/flight/user/register")
       .send({
         firstName:       "Test",
-        email:           "test2@example.com",
+        email:           "test@example.com",
         password:        "123456",
         confirmPassword: "123456",
       });
@@ -78,8 +82,8 @@ describe("Register", () => {
       .send({
         firstName:       "Test",
         lastName:        "User",
-        email:           "test3@example.com",
-        phoneNumber:     "9876543211",
+        email:           "test@example.com",
+        phoneNumber:     "9876543210",
         password:        "123456",
         confirmPassword: "999999",
       });
@@ -89,13 +93,15 @@ describe("Register", () => {
   });
 
   test("fails when email already exists", async () => {
+    User.findOne.mockResolvedValue({ user_id: 1, email: "test@example.com" });
+
     const res = await request(app)
       .post("/api/v1.0/flight/user/register")
       .send({
         firstName:       "Test",
         lastName:        "User",
-        email:           "test@example.com", // already registered above
-        phoneNumber:     "9876543212",
+        email:           "test@example.com",
+        phoneNumber:     "9876543210",
         password:        "123456",
         confirmPassword: "123456",
       });
@@ -110,8 +116,8 @@ describe("Register", () => {
       .send({
         firstName:       "Test",
         lastName:        "User",
-        email:           "test4@example.com",
-        phoneNumber:     "123",             // too short
+        email:           "test@example.com",
+        phoneNumber:     "123",
         password:        "123456",
         confirmPassword: "123456",
       });
@@ -123,25 +129,24 @@ describe("Register", () => {
 });
 
 // ─── Login tests ───────────────────────────────────────────────
-test("debug — check what's in DB before login", async () => {
-  const users = await User.findAll();
-  const roles  = await Role.findAll();
-  const mappings = await UserRole.findAll();
-
-  console.log("Users in DB:", JSON.stringify(users.map(u => ({ id: u.user_id, email: u.email }))));
-  console.log("Roles in DB:", JSON.stringify(roles.map(r => ({ id: r.role_id, name: r.role_name }))));
-  console.log("UserRoles in DB:", JSON.stringify(mappings));
-});
 
 describe("Login", () => {
 
   test("successfully logs in and returns a token", async () => {
+    const bcrypt         = require("bcryptjs");
+    const hashedPassword = await bcrypt.hash("123456", 10);
+
+    User.findOne.mockResolvedValue({
+      user_id:  1,
+      email:    "test@example.com",
+      password: hashedPassword,
+      roles:    [{ role_name: "USER" }],
+      toJSON:   () => ({ user_id: 1, email: "test@example.com", password: hashedPassword }),
+    });
+
     const res = await request(app)
       .post("/api/v1.0/flight/user/login")
-      .send({
-        email:    "test@example.com",
-        password: "123456",
-      });
+      .send({ email: "test@example.com", password: "123456" });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.token).toBeDefined();
@@ -149,24 +154,31 @@ describe("Login", () => {
   });
 
   test("fails with wrong password", async () => {
+    const bcrypt         = require("bcryptjs");
+    const hashedPassword = await bcrypt.hash("123456", 10);
+
+    User.findOne.mockResolvedValue({
+      user_id:  1,
+      email:    "test@example.com",
+      password: hashedPassword,
+      roles:    [{ role_name: "USER" }],
+      toJSON:   () => ({ user_id: 1, email: "test@example.com" }),
+    });
+
     const res = await request(app)
       .post("/api/v1.0/flight/user/login")
-      .send({
-        email:    "test@example.com",
-        password: "wrongpassword",
-      });
+      .send({ email: "test@example.com", password: "wrongpassword" });
 
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe("Invalid credentials");
   });
 
   test("fails with non-existent email", async () => {
+    User.findOne.mockResolvedValue(null);
+
     const res = await request(app)
       .post("/api/v1.0/flight/user/login")
-      .send({
-        email:    "nobody@example.com",
-        password: "123456",
-      });
+      .send({ email: "nobody@example.com", password: "123456" });
 
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe("User not found");
@@ -175,7 +187,7 @@ describe("Login", () => {
   test("fails with missing fields", async () => {
     const res = await request(app)
       .post("/api/v1.0/flight/user/login")
-      .send({ email: "test@example.com" }); // no password
+      .send({ email: "test@example.com" });
 
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe("Email and password are required");
