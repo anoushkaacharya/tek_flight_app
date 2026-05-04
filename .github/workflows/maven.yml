@@ -2,7 +2,7 @@ name: Node.js CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["anoushka"]
 
 jobs:
   build:
@@ -10,7 +10,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: backend/user_service   # ✅ correct path
+        working-directory: backend/user_service
 
     steps:
       - uses: actions/checkout@v4
